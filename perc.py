@@ -362,18 +362,23 @@ if archivo_frontal and archivo_final:
         )
  
         # ---------------- XML ----------------
-        def extraer_station_model(nombre_archivo):
-            nombre = nombre_archivo.replace(".txt", "")
-            partes = nombre.split("_")
-       
-            if len(partes) >= 2:
-                station_name = "_".join(partes[:-1])
-                model_name = partes[-1]
-            else:
-                station_name = nombre
-                model_name = "UNKNOWN_MODEL"
-       
-            return station_name, model_name
+        def extraer_station_model_desde_txt(archivo):
+            archivo.seek(0)
+            lineas = archivo.read().decode("latin-1").splitlines()
+
+            for linea in lineas:
+                partes = re.split(r"\s{2,}|\t", linea.strip())
+
+                # Buscamos una línea tipo:
+                # GMZ   T1XX_PU_Front_Mod   K_Steel   Export Format: A
+                if len(partes) >= 3 and partes[1].startswith("T"):
+                    station_name = partes[1]
+                    model_name = partes[2]
+                    return station_name, model_name
+
+            return "UNKNOWN_STATION", "UNKNOWN_MODEL"
+
+
 
 
 
@@ -406,9 +411,21 @@ if archivo_frontal and archivo_final:
            
             xml_str = ET.tostring(gauge, encoding="utf-8", method="xml")
             return xml_str
- 
-        xml_data = generar_xml_comparacion(df_correlacion)
- 
+
+
+        station_name, model_name = extraer_station_model_desde_txt(archivo_frontal)
+
+        archivo_frontal.seek(0)
+
+
+        xml_data = generar_xml_comparacion(
+            df_correlacion,
+            station_name=station_name,
+            model_name=model_name
+        )
+
+
+
         st.download_button(
             label="📥 Descargar comparación en XML",
             data=xml_data,
