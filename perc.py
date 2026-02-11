@@ -250,7 +250,7 @@ if archivo_frontal and archivo_final:
             final_mean = np.mean(final_vals)
             correlation = np.corrcoef(front_vals, final_vals)[0, 1]
             sigma6 = np.std(front_vals) * 6
-            offset_calc = front_mean - final_mean
+            offset_calc = final_mean - front_mean
 
 
             correlacion_data.append([
@@ -434,3 +434,4 @@ if archivo_frontal and archivo_final:
             mime="application/xml"
 
         )
+
