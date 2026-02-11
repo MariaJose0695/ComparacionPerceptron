@@ -128,11 +128,11 @@ def map_axis(front_axis):
     return front_axis
 
 # --- SUBIDA DE ARCHIVOS ---
-st.subheader("📤 Archivo Final")
-archivo_frontal = st.file_uploader("Carga el archivo TXT Final de Perceptron", type=["txt"], key="final")
- 
 st.subheader("📤 Archivo Frontal")
-archivo_final = st.file_uploader("Carga el archivo TXT Frontal de Perceptron", type=["txt"], key="frontal")
+archivo_frontal = st.file_uploader("Carga el archivo TXT Frontal de Perceptron", type=["txt"], key="final")
+ 
+st.subheader("📤 Archivo Final")
+archivo_final = st.file_uploader("Carga el archivo TXT Final de Perceptron", type=["txt"], key="frontal")
  
 # --- PROCESAMIENTO ---
 if archivo_frontal and archivo_final:
@@ -434,4 +434,5 @@ if archivo_frontal and archivo_final:
             mime="application/xml"
 
         )
+
 
