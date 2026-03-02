@@ -1,545 +1,401 @@
 import streamlit as st
 import pandas as pd
 import io
-from io import StringIO
-import plotly.express as px
-from xlsxwriter.utility import xl_col_to_name
-
-# =========================
-# CONFIG
-# =========================
-st.set_page_config(page_title="Comparación cmm", layout="wide")
-st.title("Comparación Vs CMM")
-
-# =========================
-# CARGA DE ARCHIVOS
-# =========================
-archivo_L = st.file_uploader(
-    "Carga el archivo TXT - Lado Izquierdo",
-    type=["txt"]
-)
-
-archivo_R = st.file_uploader(
-    "Carga el archivo TXT - Lado Derecho",
-    type=["txt"]
-)
-
-# =========================
-# LECTOR ROBUSTO TXT
-# =========================
-def leer_txt(archivo):
-    contenido = archivo.read().decode("utf-8", errors="ignore")
-    lineas = contenido.splitlines()
-
-    inicio = None
-    for i, linea in enumerate(lineas):
-        if (
-            "Cycle Time" in linea and
-            "Corr. Coef." in linea and
-            "Offset" in linea and
-            "T-Test" in linea and
-            "F-Test" in linea
-        ):
-            inicio = i
-            break
-
-    if inicio is None:
-        st.error("No se encontró la fila de encabezados reales")
-        st.stop()
-
-    datos = "\n".join(lineas[inicio:])
-
-    df = pd.read_csv(
-        StringIO(datos),
-        sep=r"\t+",
-        engine="python",
-        header=0,
-        on_bad_lines="skip"
-    )
-
-    return df
-
-# =========================
-# FUNCIONES DE COLOR
-# =========================
-def color_t_test(val):
-    try:
-        val = float(val)
-        return (
-            "background-color: #00C853; color: black; font-weight: bold"
-            if val < 0.005
-            else "background-color: #D50000; color: white; font-weight: bold"
-        )
-    except:
-        return ""
-
-def color_f_test(val):
-    try:
-        val = float(val)
-        return (
-            "background-color: #D50000; color: white; font-weight: bold"
-            if val < 0.005
-            else "background-color: #00C853; color: black; font-weight: bold"
-        )
-    except:
-        return ""
-
-def color_corr(val):
-    try:
-        val = float(val)
-        if val >= 0.95:
-            return "background-color: #00C853; color: black; font-weight: bold"
-        elif 0.90 <= val <= 0.94:
-            return "background-color: #FFD600; color: black; font-weight: bold"
-        else:
-            return "background-color: #D50000; color: white; font-weight: bold"
-    except:
-        return ""
-
-def color_offset(val):
-    try:
-        val = float(val)
-        return (
-            "background-color: #AA00FF; color: white; font-weight: bold"
-            if abs(val) > 0.5
-            else ""
-        )
-    except:
-        return ""
-
-
-# =========================
-# PROCESO PRINCIPAL
-# =========================
-if archivo_L and archivo_R:
-
-    df_L = leer_txt(archivo_L)
-    df_R = leer_txt(archivo_R)
-
-    df = pd.concat([df_L, df_R], ignore_index=True)
-    for col in ["T-Test", "F-Test", "Corr. Coef.", "Offset"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # =========================
-    # LIMPIEZA
-    # =========================
-    col_cycle = df.columns[0]
-
-    df[col_cycle] = df[col_cycle].astype(str).str.strip()
-    df = df[df[col_cycle] != ""]
-    df = df[~df[col_cycle].str.startswith("CT", na=False)]
-
-    # =========================
-    # EXTRAER NOMBRE / EJE
-    # =========================
-    df["Nombre"] = df[col_cycle].str.extract(r"(^\d+)")
-    #df["Punto"] = df[col_cycle].str.extract(r"^(.+?)(?=\[)")
-    df["Eje"] = df[col_cycle].str.extract(r"\[([A-Z])\]")
-    df["Base"] = df[col_cycle].str.extract(r"^(.+?)(?=[LR]\[)")
-    df["Lado"] = df[col_cycle].str.extract(r"([LR])(?=\[)")
-    # =========================
-    # FILTROS INTERACTIVOS
-    # =========================
-    st.sidebar.header("Filtros")
-
-    nombres = sorted(df["Nombre"].dropna().unique())
-    ejes = sorted(df["Eje"].dropna().unique())
-
-    nombre_sel = st.sidebar.multiselect(
-        "Filtrar por nombre (Cycle Time)",
-        nombres,
-        default=nombres
-    )
-
-    eje_sel = st.sidebar.multiselect(
-        "Filtrar por eje",
-        ejes,
-        default=ejes
-    )
-
-    df_filtrado = df[
-        df["Nombre"].isin(nombre_sel) &
-        df["Eje"].isin(eje_sel)
-    ]
-
-    df_filtrado = df_filtrado.copy()
-
-    # Limpiar nombres de columnas (quita espacios invisibles)
-    df_filtrado.columns = df_filtrado.columns.str.strip()
-
-    # Limpiar espacios dentro de las celdas (blindaje extra)
-    df_filtrado = df_filtrado.applymap(
-        lambda x: x.strip() if isinstance(x, str) else x
-    )
-    # =========================
-    # ORDEN TIPO EXCEL
-    # =========================
-    def orden_excel(nombre):
-        nombre = str(nombre)
-        lado = 0 if "L[" in nombre else 1
-        eje = 0 if "[Y]" in nombre else 1
-        return lado, eje
-
-    df_filtrado["__orden"] = df_filtrado[col_cycle].apply(orden_excel)
-    df_filtrado = df_filtrado.sort_values("__orden").drop(columns="__orden")
-
-    # =========================
-    # SALIDA
-    # =========================
-    st.success("Filtro aplicado correctamente")
-    st.write("Filas visibles:", df_filtrado.shape[0])
-
-    styled_df = (
-        df_filtrado.style
-        .applymap(color_t_test, subset=["T-Test"])
-        .applymap(color_f_test, subset=["F-Test"])
-        .applymap(color_corr, subset=["Corr. Coef."])
-        .applymap(color_offset, subset=["Offset"])
-    )
-
-    st.dataframe(styled_df, use_container_width=True)
-    st.subheader("📊 Heatmap Histórico")
-
-    columnas_fecha = [
-        col for col in df_filtrado.columns
-        if "/" in col and ":" in col
-    ]
-
-    columnas_fecha = []
-
-    for col in df_filtrado.columns:
-        try:
-            pd.to_datetime(col)
-            columnas_fecha.append(col)
-        except:
-            pass
-
-    df_heat = df_filtrado.set_index(col_cycle)[columnas_fecha]
-
-    fig = px.imshow(
-        df_heat,
-        aspect="auto",
-        color_continuous_scale="RdYlGn_r"
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    
-    st.subheader("📈 Tendencia por Fecha")
-
-    # Detectar automáticamente columnas que son fechas
-    columnas_fecha = [
-        col for col in df_filtrado.columns
-        if "/" in col and ":" in col
-    ]
-
-    # Selector de Cycle Time
-    cycle_sel = st.selectbox(
-        "Selecciona Cycle Time",
-        df_filtrado[col_cycle].unique()
-    )
-
-    #df_graf = df_filtrado[df_filtrado[col_cycle] == cycle_sel]
-    df_filtrado[col_cycle] = df_filtrado[col_cycle].str.strip()
-    cycle_sel = cycle_sel.strip()
-
-    df_graf = df_filtrado[df_filtrado[col_cycle] == cycle_sel]
-
-    # Transponer para convertir columnas en eje X
-    serie = df_graf[columnas_fecha].T
-    serie.columns = ["Valor"]
-
-    # Convertir índice a datetime
-    serie.index = pd.to_datetime(serie.index, errors="coerce")
-
-    st.line_chart(serie)
-    # =========================
-    # DESCARGAR A EXCEL PRO (CON COLORES + FILTROS + AUTOAJUSTE + KPIs)
-    # =========================
-    output = io.BytesIO()
-
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-
-        df_filtrado["Punto"] = df_filtrado["Nombre"].astype(str).str.strip()
-        df_filtrado.to_excel(writer, index=False, sheet_name="Comparacion")
-
-        workbook = writer.book
-        worksheet = writer.sheets["Comparacion"]
-
-        # =========================
-        # FORMATOS
-        # =========================
-        format_green = workbook.add_format({"bg_color": "#00C853", "font_color": "black", "bold": True})
-        format_red = workbook.add_format({"bg_color": "#D50000", "font_color": "white", "bold": True})
-        format_yellow = workbook.add_format({"bg_color": "#FFD600", "font_color": "black", "bold": True})
-        format_purple = workbook.add_format({"bg_color": "#AA00FF", "font_color": "white", "bold": True})
-        format_header = workbook.add_format({"bold": True, "border": 1})
-        format_border = workbook.add_format({"border": 1})
-
-        # =========================
-        # FORMATO ENCABEZADO
-        # =========================
-        for col_num, value in enumerate(df_filtrado.columns):
-            worksheet.write(0, col_num, value, format_header)
-
-        # =========================
-        # AUTO AJUSTAR COLUMNAS
-        # =========================
-        for i, col in enumerate(df_filtrado.columns):
-            max_len = max(
-                df_filtrado[col].astype(str).map(len).max(),
-                len(col)
-            ) + 2
-            worksheet.set_column(i, i, max_len)
-
-        # =========================
-        # CONGELAR ENCABEZADO
-        # =========================
-        worksheet.freeze_panes(1, 0)
-
-        # =========================
-        # FILTRO AUTOMÁTICO
-        # =========================
-        worksheet.autofilter(
-            0, 0,
-            df_filtrado.shape[0],
-            df_filtrado.shape[1] - 1
-        )
-
-        # =========================
-        # COLORES CELDA POR CELDA
-        # =========================
-        col_t = df_filtrado.columns.get_loc("T-Test")
-        col_f = df_filtrado.columns.get_loc("F-Test")
-        col_corr = df_filtrado.columns.get_loc("Corr. Coef.")
-        col_offset = df_filtrado.columns.get_loc("Offset")
-
-        #for row_num, row in df_filtrado.iterrows():
-        #    excel_row = row_num + 1
-
-        for excel_row, (_, row) in enumerate(df_filtrado.iterrows(), start=1):
-
-            for col_num in range(len(df_filtrado.columns)):
-                valor = row.iloc[col_num]
-
-                if pd.isna(valor) or valor in [float("inf"), float("-inf")]:
-                    worksheet.write(excel_row, col_num, "", format_border)
-                else:
-                    worksheet.write(excel_row, col_num, valor, format_border)
-
-            # T-Test
-            try:
-                if row["T-Test"] < 0.005:
-                    worksheet.write(excel_row, col_t, row["T-Test"], format_green)
-                else:
-                    worksheet.write(excel_row, col_t, row["T-Test"], format_red)
-            except:
-                pass
-
-            # F-Test
-            try:
-                if row["F-Test"] < 0.005:
-                    worksheet.write(excel_row, col_f, row["F-Test"], format_red)
-                else:
-                    worksheet.write(excel_row, col_f, row["F-Test"], format_green)
-            except:
-                pass
-
-            # Corr. Coef.
-            try:
-                val = row["Corr. Coef."]
-                if val >= 0.95:
-                    worksheet.write(excel_row, col_corr, val, format_green)
-                elif 0.90 <= val < 0.95:
-                    worksheet.write(excel_row, col_corr, val, format_yellow)
-                else:
-                    worksheet.write(excel_row, col_corr, val, format_red)
-            except:
-                pass
-
-            # Offset
-            try:
-                val = row["Offset"]
-                if abs(val) > 0.5:
-                    worksheet.write(excel_row, col_offset, val, format_purple)
-            except:
-                pass
-
-        # ======================================================
-        # ================= DASHBOARD DINÁMICO =================
-        # ======================================================
-
-        total = len(df_filtrado)
-        fallas_t = (pd.to_numeric(df_filtrado["T-Test"], errors="coerce") >= 0.005).sum()
-        fallas_corr = (pd.to_numeric(df_filtrado["Corr. Coef."], errors="coerce") < 0.95).sum()
-        offsets_altos = (pd.to_numeric(df_filtrado["Offset"], errors="coerce").abs() > 0.5).sum()
-
-        dashboard = workbook.add_worksheet("Dashboard")
-
-        dashboard.write("A1", "DASHBOARD EJECUTIVO", format_header)
-
-        dashboard.write("A3", "Total Mediciones")
-        dashboard.write("B3", total)
-
-        dashboard.write("A4", "T-Test fuera de rango")
-        dashboard.write("B4", fallas_t)
-
-        dashboard.write("A5", "Correlación baja")
-        dashboard.write("B5", fallas_corr)
-
-        dashboard.write("A6", "Offset alto")
-        dashboard.write("B6", offsets_altos)
-
-        # ================= DROPDOWN POR PUNTO =================
-
-        puntos_unicos = (
-            df_filtrado["Punto"]
-            .dropna()
-            .unique()
-            .tolist()
-        )
-
-        dashboard.write("A9", "Selecciona Punto:")
-
-        col_lista = 25  # Columna Z
-
-        for i, valor in enumerate(puntos_unicos):
-            dashboard.write(i, col_lista, valor)
-
-        rango_dropdown = f"=Dashboard!${xl_col_to_name(col_lista)}$1:${xl_col_to_name(col_lista)}${len(puntos_unicos)}"
-
-        dashboard.data_validation(
-            "B9",
-            {
-                "validate": "list",
-                "source": rango_dropdown,
-            },
-        )
-
-        dashboard.set_column(col_lista, col_lista, None, None, {"hidden": True})
-
-        # ================= COLUMNAS FECHA =================
-
-        columnas_fecha = []
-
-        for col in df_filtrado.columns:
-            try:
-                pd.to_datetime(col)
-                columnas_fecha.append(col)
-            except:
-                pass
-
-        fila_inicio = 12
-        dashboard.write_row(
-            fila_inicio, 0,
-            ["Fecha", "Lado Izq", "Lado Der", "Diferencia"]
-        )
-
-        # Columnas necesarias
-        col_punto = df_filtrado.columns.get_loc("Punto")
-        col_lado = df_filtrado.columns.get_loc("Lado")
-
-        col_punto_excel = xl_col_to_name(col_punto)
-        col_lado_excel = xl_col_to_name(col_lado)
-
-        rango_punto = f"Comparacion!${col_punto_excel}$2:${col_punto_excel}${len(df_filtrado)+1}"
-        rango_lado = f"Comparacion!${col_lado_excel}$2:${col_lado_excel}${len(df_filtrado)+1}"
-
-        for i, fecha in enumerate(columnas_fecha):
-
-            col_idx = df_filtrado.columns.get_loc(fecha)
-            col_excel = xl_col_to_name(col_idx)
-
-            rango_valores = f"Comparacion!${col_excel}$2:${col_excel}${len(df_filtrado)+1}"
-
-            formula_L = (
-                f'=IFERROR(AVERAGEIFS('
-                f'{rango_valores},'
-                f'{rango_punto},$B$9,'
-                f'{rango_lado},"L"),0)'
-            )
-
-            formula_R = (
-                f'=IFERROR(AVERAGEIFS('
-                f'{rango_valores},'
-                f'{rango_punto},$B$9,'
-                f'{rango_lado},"R"),0)'
-            )
-
-            dashboard.write(fila_inicio + i + 1, 0, fecha)
-            dashboard.write_formula(fila_inicio + i + 1, 1, formula_L)
-            dashboard.write_formula(fila_inicio + i + 1, 2, formula_R)
-
-            dashboard.write_formula(
-                fila_inicio + i + 1,
-                3,
-                f"=B{fila_inicio+i+2}-C{fila_inicio+i+2}"
-            )
-
-        # ================= GRAFICA DINÁMICA =================
-
-        chart_dyn = workbook.add_chart({"type": "line"})
-
-        chart_dyn.add_series({
-            "name": "Lado Izquierdo",
-            "categories": ["Dashboard", fila_inicio + 1, 0, fila_inicio + len(columnas_fecha), 0],
-            "values": ["Dashboard", fila_inicio + 1, 1, fila_inicio + len(columnas_fecha), 1],
+from collections import OrderedDict
+import re
+import numpy as np
+ 
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="Convertir TXT Perceptron a Excel", layout="wide")
+ 
+# --- ESTILO GLOBAL (FONDO OSCURO, TABLAS CLARAS) ---
+st.markdown("""
+    <style>
+    body {
+        background-color: #121212;
+        color: #FFFFFF;
+        font-family: 'Poppins', sans-serif;
+    }
+ 
+    .stApp {
+        background-color: #121212;
+    }
+ 
+    /* Encabezados */
+    h1, h2, h3, h4 {
+        color: #ffc107;
+    }
+ 
+    /* Área de subida de archivos */
+    div[data-testid="stFileUploader"] {
+        border: 2px dashed #5a5a5a !important;
+        background-color: rgba(50,50,50,0.7);
+        border-radius: 15px;
+        padding: 20px;
+    }
+ 
+    div[data-testid="stFileUploader"]:hover {
+        border-color: #ffc107 !important;
+        background-color: rgba(80,80,80,0.9);
+    }
+ 
+    /* Tabla de correlación */
+    .dataframe {
+        background: #2b2b2b !important;
+        color: #ffffff !important;
+        border-radius: 10px;
+        font-size: 15px;
+    }
+ 
+    .dataframe td, .dataframe th {
+        text-align: center !important;
+        padding: 8px !important;
+    }
+ 
+    /* Botón de descarga */
+    div.stDownloadButton > button {
+        background-color: #ffc107;
+        color: #000;
+        font-weight: bold;
+        border-radius: 10px;
+        border: none;
+        padding: 10px 25px;
+    }
+ 
+    div.stDownloadButton > button:hover {
+        background-color: #ffde59;
+        color: #000;
+    }
+    </style>
+""", unsafe_allow_html=True)
+ 
+# --- TÍTULO ---
+st.title("📄 Comparativo Frontal vs Final")
+ 
+# --- FUNCIÓN PARA PROCESAR TXT ---
+def procesar_txt_a_df(archivo):
+    contenido = archivo.read().decode("latin-1").splitlines()
+    encabezados, mediciones = [], []
+ 
+    for linea in contenido:
+        partes = linea.strip().split("\t")
+        if "JSN" in partes and "PSN" in partes:
+            encabezados = partes
+            continue
+        if partes and partes[0].upper() not in ["NOMINAL", "USL", "LSL", "UTL", "LTL", "URL", "LRL"]:
+            mediciones.append(partes)
+ 
+    if not encabezados or not mediciones:
+        return None, []
+ 
+    filas_med = []
+    for med in mediciones:
+        fila = OrderedDict({
+            "JSN": med[0],
+            "PSN": med[1] if len(med) > 1 else "",
+            "Fecha": med[2] if len(med) > 2 else "",
+            "Hora": med[3] if len(med) > 3 else ""
         })
+        for i, col in enumerate(encabezados[4:], start=4):
+            fila[col] = med[i] if i < len(med) else ""
+        filas_med.append(fila)
+ 
+    eje_cols = encabezados[4:]
+    return pd.DataFrame(filas_med), eje_cols
+ 
 
-        chart_dyn.add_series({
-            "name": "Lado Derecho",
-            "categories": ["Dashboard", fila_inicio + 1, 0, fila_inicio + len(columnas_fecha), 0],
-            "values": ["Dashboard", fila_inicio + 1, 2, fila_inicio + len(columnas_fecha), 2],
-        })
+# --- MAPEO DE EJES ---
+def map_axis(front_axis):
 
-        chart_dyn.add_series({
-            "name": "Diferencia",
-            "categories": ["Dashboard", fila_inicio + 1, 0, fila_inicio + len(columnas_fecha), 0],
-            "values": ["Dashboard", fila_inicio + 1, 3, fila_inicio + len(columnas_fecha), 3],
-        })
+    forced_map = {
+        "1000L[Y]": "1000L[Y]",
+        "1000R[Y]": "1000R[Y]",
+        "1100L[X]": "3125L[X]",
+        "1100L[Y]": "3125L[Y]",
+        "1100L[Z]": "3125L[Z]",
+        "1100R[X]": "3125R[X]",
+        "1100R[Y]": "3125R[Y]",
+        "1100R[Z]": "3125R[Z]"
+    }
 
-        chart_dyn.set_title({"name": "Comparación Dinámica L vs R"})
-        chart_dyn.set_style(10)
+    if front_axis in forced_map:
+        return forced_map[front_axis]
 
-        dashboard.insert_chart("F12", chart_dyn)
+    match = re.match(r"(1100)([LR]\[[XYZ]\])", front_axis)
+    if match:
+        return f"3125{match.group(2)}"
 
-        # ================= TOP 10 OFFSETS =================
+    return front_axis
 
-        df_offset_top = df_filtrado.copy()
-        df_offset_top["AbsOffset"] = df_offset_top["Offset"].abs()
-        top10 = df_offset_top.sort_values("AbsOffset", ascending=False).head(10)
+# --- SUBIDA DE ARCHIVOS ---
+st.subheader("📤 Archivo Frontal/Trasero")
+archivo_frontal = st.file_uploader("Carga el archivo TXT Frontal de Perceptron", type=["txt"], key="frontal")
+ 
+st.subheader("📤 Archivo Final")
+archivo_final = st.file_uploader("Carga el archivo TXT Final de Perceptron", type=["txt"], key="final")
+ 
+# --- PROCESAMIENTO ---
+if archivo_frontal and archivo_final:
+    df_frontal, ejes_frontal = procesar_txt_a_df(archivo_frontal)
+    df_final, ejes_final = procesar_txt_a_df(archivo_final)
+ 
+    if df_frontal is None or df_final is None:
+        st.error("⚠️ Uno de los archivos no contiene mediciones reales válidas.")
+    else:
+        st.success("✅ Archivos procesados correctamente. Descarga combinada lista.")
+ 
+        df_frontal["PSN"] = df_frontal["PSN"].astype(str).str.strip()
+        df_final["PSN"] = df_final["PSN"].astype(str).str.strip()
 
-        fila_top = 30
+        df_match = pd.merge(
+            df_frontal[["PSN"]],
+            df_final[["PSN"]],
+            on="PSN",
+            how="inner"
+        )
 
-        dashboard.write(fila_top, 0, "Top 10 Offsets Críticos", format_header)
+        psn_validos = df_match["PSN"].unique()
 
-        dashboard.write_row(fila_top + 1, 0, ["Cycle", "Offset"])
+        df_frontal = df_frontal[df_frontal["PSN"].isin(psn_validos)].reset_index(drop=True)
+        df_final = df_final[df_final["PSN"].isin(psn_validos)].reset_index(drop=True)
 
-        for i, row in top10.iterrows():
-            dashboard.write_row(fila_top + 2, 0, [row[col_cycle], row["Offset"]])
-            fila_top += 1
+ 
+        # ---------------------------
+        # 🔥 GENERAR MAPEOS DE EJES
+        # ---------------------------
+        ejes_mapeados = []
+        for eje in ejes_frontal:
+            eje_final = map_axis(eje)
+            if eje_final in ejes_final or eje_final.startswith("3125"):
+                ejes_mapeados.append((eje, eje_final))
 
-        chart_offset = workbook.add_chart({"type": "column"})
-
-        chart_offset.add_series({
-            "categories": ["Dashboard", fila_top - 9, 0, fila_top - 1, 0],
-            "values": ["Dashboard", fila_top - 9, 1, fila_top - 1, 1],
-            "name": "Offset Absoluto"
-        })
-
-        chart_offset.set_title({"name": "Top 10 Offsets"})
-        dashboard.insert_chart("E30", chart_offset)
-
-
-    excel_data = output.getvalue()
-
-    st.download_button(
-        label="📥 Descargar Excel PRO",
-        data=excel_data,
-        file_name="Comparacion_CMM_PRO.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        df_axes = pd.DataFrame(ejes_mapeados, columns=["Front-Axis", "Final-Axis"])
 
 
-else:
-    st.info("Carga ambos archivos TXT para continuar")
+        # ⭐⭐ AQUI AGREGAMOS TUS 8 PUNTOS A FUERZAS ⭐⭐
+        forced_extra = pd.DataFrame([
+            ["1100L[X]", "3125L[X]"],
+            ["1100L[Y]", "3125L[Y]"],
+            ["1100L[Z]", "3125L[Z]"],
+            ["1100R[X]", "3125R[X]"],
+            ["1100R[Y]", "3125R[Y]"],
+            ["1100R[Z]", "3125R[Z]"]
+        ], columns=["Front-Axis", "Final-Axis"])
 
-#streamlit run "C:\Users\maripes3\Documents\Comparaciones\MIS DATOS\MIS DATOS\ComparacionVsCMM.py"
+        df_axes = pd.concat([df_axes, forced_extra], ignore_index=True).drop_duplicates()
+
+
+        # ⭐⭐ FIN DEL BLOQUE NUEVO ⭐⭐
+
+
+        final_ejes_validos = df_axes["Final-Axis"].unique()
+
+        columnas_base = ["PSN", "JSN", "Fecha", "Hora"]
+
+        df_final = df_final[[c for c in columnas_base if c in df_final.columns] + 
+                            [e for e in final_ejes_validos if e in df_final.columns]]
+
+        # --- FORZAR QUE LOS EJES EXTRA EXISTAN EN AMBOS DATAFRAMES ---
+        for front_eje, final_eje in forced_extra.values:
+            if front_eje not in df_frontal.columns:
+                df_frontal[front_eje] = np.nan
+            if final_eje not in df_final.columns:
+                df_final[final_eje] = np.nan
+
+
+
+        # --- Cálculo de correlaciones ---
+        df_merge = pd.merge(
+            df_frontal, df_final,
+            on="PSN", suffixes=("_front", "_final")
+        )
+
+        correlacion_data = []
+
+        for front_eje, final_eje in df_axes.values:
+
+            # Intentar primero columnas sin sufijo
+            col_front_1 = front_eje
+            col_final_1 = final_eje
+
+            # Intentar columnas con sufijo del merge
+            col_front_2 = f"{front_eje}_front"
+            col_final_2 = f"{final_eje}_final"
+
+            # Determinar cuáles columnas existen en df_merge
+            if col_front_1 in df_merge.columns and col_final_1 in df_merge.columns:
+                col_front = col_front_1
+                col_final = col_final_1
+            elif col_front_2 in df_merge.columns and col_final_2 in df_merge.columns:
+                col_front = col_front_2
+                col_final = col_final_2
+            else:
+                # Si no existe ninguna forma, saltar eje
+                continue
+
+            tmp = df_merge[[col_front, col_final]].copy()
+
+            tmp[col_front] = pd.to_numeric(tmp[col_front], errors="coerce")
+            tmp[col_final] = pd.to_numeric(tmp[col_final], errors="coerce")
+
+            tmp = tmp.dropna()
+
+            if len(tmp) < 2:
+                continue
+
+            front_vals = tmp[col_front].values
+            final_vals = tmp[col_final].values
+
+            front_mean = np.mean(front_vals)
+            final_mean = np.mean(final_vals)
+            correlation = np.corrcoef(front_vals, final_vals)[0, 1]
+            sigma6 = np.std(front_vals) * 6
+            offset_calc = final_mean - front_mean
+
+            correlacion_data.append([
+                front_eje, final_eje,
+                round(front_mean, 3),
+                round(final_mean, 3),
+                round(correlation, 3),
+                round(sigma6, 3),
+                round(offset_calc, 3)
+            ])
+
+ 
+ 
+        df_correlacion = pd.DataFrame(
+            correlacion_data,
+            columns=[
+                "Front-Axis", "Final-Axis",
+                "Front-Mean", "Final-Mean",
+                "Correlation", "6Sigma", "Calculated-Offset"
+            ]
+        )
+ 
+        def colorear_correlacion(val):
+            if isinstance(val, (int, float)):
+                if val >= 0.7:
+                    return 'background-color: #47FF47; color: #000000; font-weight: 600;'
+                elif val >= 0.69:
+                    return 'background-color: #FFFD00; color: #000000; font-weight: 600;'
+            return 'color: #FFFFFF;'
+ 
+        def colorear_offset(val):
+            if isinstance(val, (int, float)):
+                if abs(val) > 1:
+                    return 'background-color: #FF0000; color: #FFFFFF; font-weight: 600;'
+                elif abs(val) > 0.5:
+                    return 'background-color: #FFFD00; color: #000000; font-weight: 600;'
+            return 'color: #FFFFFF;'
+ 
+        df_correlacion_styled = (
+            df_correlacion.style
+            .applymap(colorear_correlacion, subset=["Correlation"])
+            .applymap(colorear_offset, subset=["Calculated-Offset"])
+            .set_table_styles([
+                {'selector': 'th', 'props': [('background-color', '#2b2b2b'),
+                                            ('color', '#FFFFFF'),
+                                            ('font-weight', 'bold'),
+                                            ('text-align', 'center'),
+                                            ('padding', '8px')]},
+                {'selector': 'td', 'props': [('background-color', '#1e1e1e'),
+                                            ('color', '#FFFFFF'),
+                                            ('text-align', 'center'),
+                                            ('padding', '8px')]},
+                {'selector': 'tbody tr:hover', 'props': [('background-color', '#333333')]},
+                {'selector': 'table', 'props': [('border-radius', '10px'),
+                                                ('overflow', 'hidden'),
+                                                ('border', '1px solid #444')]}
+            ])
+        )
+ 
+        st.subheader("📈 Correlación")
+        st.dataframe(df_correlacion_styled, use_container_width=True)
+ 
+        import openpyxl
+        from openpyxl.styles import PatternFill, Font
+ 
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            df_frontal.to_excel(writer, index=False, sheet_name="Frontal")
+            df_final.to_excel(writer, index=False, sheet_name="Final")
+            df_match.to_excel(writer, index=False, sheet_name="Match_PSN")
+            df_axes.to_excel(writer, index=False, sheet_name="Eje-Mapping")
+            df_correlacion.to_excel(writer, index=False, sheet_name="Correlacion")
+
+        buffer.seek(0)
+        wb = openpyxl.load_workbook(buffer)
+        ws = wb["Correlacion"]
+
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=5, max_col=5):
+            for cell in row:
+                if cell.value is not None:
+                    if cell.value >= 0.7:
+                        cell.fill = PatternFill(start_color="47FF47", end_color="47FF47", fill_type="solid")
+                    elif cell.value >= 0.69:
+                        cell.fill = PatternFill(start_color="FFFD00", end_color="FFFD00", fill_type="solid")
+
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=7, max_col=7):
+            for cell in row:
+                if cell.value is not None:
+                    if abs(cell.value) > 1:
+                        cell.fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
+                    elif abs(cell.value) > 0.5:
+                        cell.fill = PatternFill(start_color="FFFD00", end_color="FFFD00", fill_type="solid")
+
+        mean_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+        for col in [3, 4]:
+            for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=col, max_col=col):
+                for cell in row:
+                    if cell.value is not None:
+                        cell.fill = mean_fill
+
+        excel_buffer = io.BytesIO()
+        wb.save(excel_buffer)
+        excel_buffer.seek(0)
+ 
+        st.download_button(
+            label="📥 Descargar Excel completo coloreado",
+            data=excel_buffer,
+            file_name="Mediciones_Percepton_Completo_Coloreado.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+ 
+        # ---------------- XML ----------------
+        def generar_xml_comparacion(df, station_name="T1XX_SUV_Front_Mod", model_name="K_SUV"):
+            import xml.etree.ElementTree as ET
+           
+            gauge = ET.Element("GAUGE")
+            station = ET.SubElement(gauge, "STATION")
+            ET.SubElement(station, "NAME").text = station_name
+            model = ET.SubElement(station, "MODEL")
+            ET.SubElement(model, "NAME").text = model_name
+           
+            df["Checkpoint"] = df["Front-Axis"].str.extract(r"(^\d+[LR])")
+            df["Axis"] = df["Front-Axis"].str.extract(r"\[([XYZ])\]")
+           
+            for checkpoint_name, group in df.groupby("Checkpoint"):
+                checkpoint = ET.SubElement(model, "CHECKPOINT")
+                ET.SubElement(checkpoint, "NAME").text = checkpoint_name
+               
+                for axis in ["X", "Y", "Z"]:
+                    axis_node = ET.SubElement(checkpoint, "AXIS")
+                    ET.SubElement(axis_node, "NAME").text = axis
+                    val = group.loc[group["Axis"]==axis, "Calculated-Offset"]
+                    ET.SubElement(axis_node, "OFFSET").text = str(round(val.values[0],3)) if not val.empty else "0"
+               
+                axis_node = ET.SubElement(checkpoint, "AXIS")
+                ET.SubElement(axis_node, "NAME").text = "Diameter"
+                ET.SubElement(axis_node, "OFFSET").text = "0"
+           
+            xml_str = ET.tostring(gauge, encoding="utf-8", method="xml")
+            return xml_str
+ 
+        xml_data = generar_xml_comparacion(df_correlacion)
+ 
+        st.download_button(
+            label="📥 Descargar comparación en XML",
+            data=xml_data,
+            file_name="Comparacion_Percepton.xml",
+            mime="application/xml"
+        )
