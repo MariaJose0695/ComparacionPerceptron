@@ -147,12 +147,13 @@ if archivo_frontal and archivo_final:
         df_frontal["PSN"] = df_frontal["PSN"].astype(str).str.strip()
         df_final["PSN"] = df_final["PSN"].astype(str).str.strip()
 
-        df_match = pd.merge(
-            df_frontal[["PSN"]],
-            df_final[["PSN"]],
-            on="PSN",
-            how="inner"
-        )
+        df_match = pd.DataFrame({
+            "PSN": list(
+                set(df_frontal["PSN"]).intersection(
+                    set(df_final["PSN"])
+                )
+            )
+        }).sort_values("PSN").reset_index(drop=True)
 
         psn_validos = df_match["PSN"].unique()
 
