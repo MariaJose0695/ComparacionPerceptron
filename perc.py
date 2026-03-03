@@ -160,7 +160,33 @@ if archivo_frontal and archivo_final:
         df_frontal = df_frontal[df_frontal["PSN"].isin(psn_validos)].reset_index(drop=True)
         df_final = df_final[df_final["PSN"].isin(psn_validos)].reset_index(drop=True)
 
- 
+        # ---------------------------------
+        # EXTRAER STATION Y MODEL DINÁMICO
+        # ---------------------------------
+
+        nombre_archivo = archivo_frontal.name.replace(".txt", "")
+
+        # Quitar timestamp inicial (todo antes del primer "_")
+        if "_" in nombre_archivo:
+            nombre_sin_fecha = nombre_archivo.split("_", 1)[1]
+        else:
+            nombre_sin_fecha = nombre_archivo
+
+        # Separar partes
+        partes = nombre_sin_fecha.split("_")
+
+        if "Front" in partes:
+            idx_front = partes.index("Front")
+
+            # Station → todo hasta "Mod"
+            station_name = "_".join(partes[:idx_front+2])
+
+            # Modelo → lo que viene después
+            model_name = "_".join(partes[idx_front+2:]) if len(partes) > idx_front+2 else "UNKNOWN"
+        else:
+            station_name = nombre_sin_fecha
+            model_name = "UNKNOWN"
+        
         # ---------------------------
         # 🔥 GENERAR MAPEOS DE EJES
         # ---------------------------
@@ -363,7 +389,7 @@ if archivo_frontal and archivo_final:
         )
  
         # ---------------- XML ----------------
-        def generar_xml_comparacion(df, station_name="T1XX_SUV_Front_Mod", model_name="K_SUV"):
+        def generar_xml_comparacion(df, station_name, model_name):
             import xml.etree.ElementTree as ET
            
             gauge = ET.Element("GAUGE")
@@ -392,7 +418,12 @@ if archivo_frontal and archivo_final:
             xml_str = ET.tostring(gauge, encoding="utf-8", method="xml")
             return xml_str
  
-        xml_data = generar_xml_comparacion(df_correlacion)
+        #xml_data = generar_xml_comparacion(df_correlacion)
+        xml_data = generar_xml_comparacion(
+            df_correlacion,
+            station_name=station_name,
+            model_name=model_name
+        )
  
         st.download_button(
             label="📥 Descargar comparación en XML",
